@@ -16,4 +16,8 @@ class Paper(BaseModel):
     categories: List[str]
     pdf_url: Optional[str] = None
     
+    # Intelligence Fields
+    llm_summary: Optional[str] = None
+    key_insights: Optional[str] = None # Can be JSON string or Markdown list
+    
     model_config = ConfigDict(frozen=True)

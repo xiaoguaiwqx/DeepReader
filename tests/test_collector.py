@@ -1,4 +1,3 @@
-import pytest
 from deep_reader.collector.arxiv_client import ArxivCollector
 from deep_reader.models import Paper
 

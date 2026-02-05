@@ -1,13 +1,13 @@
 import argparse
 import time
-import signal
-import sys
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from dotenv import load_dotenv
 
 from deep_reader.core_loop import run_daily_cycle
 
 def main():
+    load_dotenv()
     parser = argparse.ArgumentParser(description="DeepReader Agent")
     parser.add_argument("--run-once", action="store_true", help="Run the cycle once and exit")
     parser.add_argument("--schedule", action="store_true", help="Run in scheduled mode (daily)")

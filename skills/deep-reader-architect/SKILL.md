@@ -50,10 +50,35 @@ description: DeepReader 项目的官方开发指南。包含架构决策、编�
 - [x] **Notifier**: 基础 SMTP 邮件发送。
 - [x] **Integration**: 每日定时任务脚本。
 
-### Phase 2: Intelligence & UI (待定)
-- [ ] LLM Summarization (Gemini/OpenAI).
-- [ ] Web Dashboard (Next.js).
-- [ ] ChromaDB Vector Store.
+### Phase 2: Intelligence & UI (进行中)
+
+**目标**: 将项目升级为 Client-Server 架构，集成 LLM 摘要功能，并提供 Web 界面。
+
+**Step 1: Intelligence Engine (智能引擎)**
+- [x] **Dependency**: 添加 `google-generativeai` (Gemini) 或 `openai` (Custom/Compatible) 依赖。
+- [x] **Schema Update**: 数据库 `papers` 表新增字段:
+    - `llm_summary` (TEXT): AI 生成的中文摘要。
+    - `key_insights` (JSON/TEXT): 关键点提取。
+- [x] **LLM Client**: 实现 `src/deep_reader/intelligence/llm_client.py`。
+    - 支持配置 `LLM_PROVIDER` (google/custom)。
+    - 支持自定义 `LLM_BASE_URL` 和 `LLM_API_KEY`。
+- [x] **Integration**: 更新 `core_loop`，在抓取后自动触发摘要生成。
+
+**Step 2: Backend API (后端服务)**
+- [x] **Dependency**: 添加 `fastapi`, `uvicorn`。
+- [x] **API Logic**: 实现 `src/deep_reader/server/app.py`。
+    - `GET /api/papers`: 获取论文列表（分页、筛选）。
+    - `GET /api/papers/{id}`: 获取详情。
+    - `POST /api/trigger`: 手动触发抓取任务。
+
+**Step 3: Web Dashboard (前端界面)**
+- [x] **Setup**: 初始化 Next.js 项目 (`web/` 目录)。
+- [x] **UI Components**: PaperCard, SummaryView, Filters.
+- [x] **Integration**: 对接 FastAPI 后端。
+
+### Phase 3: Advanced Features (未来规划)
+- [ ] ChromaDB Vector Store (RAG).
+- [ ] Chat with Paper.
 
 ---
 
