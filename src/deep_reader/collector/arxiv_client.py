@@ -1,5 +1,5 @@
 import arxiv
-from typing import List, Optional
+from typing import List
 from datetime import datetime, timedelta, timezone
 from deep_reader.models import Paper
 

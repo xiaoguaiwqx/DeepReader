@@ -30,6 +30,7 @@ venv.bak/
 
 # Database
 *.db
+*.db-journal
 *.sqlite
 *.sqlite3
 

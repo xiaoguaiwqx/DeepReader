@@ -1,9 +1,7 @@
 import sqlite3
 import json
-from typing import List, Optional
+from typing import Optional, List
 from datetime import datetime
-from pathlib import Path
-from contextlib import contextmanager
 
 from deep_reader.models import Paper
 
@@ -13,7 +11,7 @@ class DatabaseManager:
         self._init_db()
 
     def _get_connection(self):
-        return sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+        return sqlite3.connect(self.db_path)
 
     def _init_db(self):
         """Initialize the database schema."""
@@ -33,6 +31,17 @@ class DatabaseManager:
                     pdf_url TEXT
                 )
             """)
+
+            # Migration: Add new columns if they don't exist
+            try:
+                cursor.execute("ALTER TABLE papers ADD COLUMN llm_summary TEXT")
+            except sqlite3.OperationalError:
+                pass 
+            
+            try:
+                cursor.execute("ALTER TABLE papers ADD COLUMN key_insights TEXT")
+            except sqlite3.OperationalError:
+                pass
             
             # Authors table
             cursor.execute("""
@@ -54,6 +63,24 @@ class DatabaseManager:
             """)
             conn.commit()
 
+    def _parse_date(self, date_val):
+        """Parses a date value which might be a string or datetime object."""
+        if isinstance(date_val, str):
+            try:
+                # Try simple ISO format
+                return datetime.fromisoformat(date_val)
+            except ValueError:
+                # Fallback for formats like "2026-02-04 18:59:52+00:00" if standard parser fails
+                # Often separating space and timezone can be tricky manually if fromisoformat is strict
+                # In Python 3.11+ fromisoformat is very good. In 3.10 it handles most.
+                # If it fails, let's try to strip timezone or handle space
+                try:
+                    return datetime.strptime(date_val, "%Y-%m-%d %H:%M:%S%z")
+                except ValueError:
+                     pass
+                return date_val # Return as is or raise
+        return date_val
+
     def save_paper(self, paper: Paper):
         """Saves a paper and its authors to the database."""
         with self._get_connection() as conn:
@@ -65,8 +92,8 @@ class DatabaseManager:
             
             cursor.execute("""
                 INSERT OR REPLACE INTO papers 
-                (arxiv_id, title, summary, published_date, updated_date, primary_category, categories, pdf_url)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (arxiv_id, title, summary, published_date, updated_date, primary_category, categories, pdf_url, llm_summary, key_insights)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 paper.arxiv_id,
                 paper.title,
@@ -75,7 +102,9 @@ class DatabaseManager:
                 paper.updated_date,
                 paper.primary_category,
                 categories_json,
-                paper.pdf_url
+                paper.pdf_url,
+                paper.llm_summary,
+                paper.key_insights
             ))
             
             # 2. Insert Authors and Link
@@ -104,9 +133,14 @@ class DatabaseManager:
             if not row:
                 return None
                 
-            # Unpack row (order must match INSERT)
-            # arxiv_id, title, summary, published, updated, primary_cat, categories_json, pdf_url
-            (pid, title, summary, pub_date, upd_date, prim_cat, cats_json, pdf) = row
+            # Unpack row (order must match INSERT/Schema)
+            # Schema: arxiv_id, title, summary, published_date, updated_date, primary_category, categories, pdf_url, llm_summary, key_insights
+            # Note: We added columns via ALTER, so they are at the end.
+            # But "SELECT *" order depends on schema.
+            # To be safe, let's explicitly select columns or trust the order if ALTER appends.
+            # SQLite appends.
+            
+            (pid, title, summary, pub_date, upd_date, prim_cat, cats_json, pdf, llm_summ, insights) = row
             
             # Fetch authors
             cursor.execute("""
@@ -122,11 +156,13 @@ class DatabaseManager:
                 title=title,
                 authors=authors,
                 summary=summary,
-                published_date=pub_date,
-                updated_date=upd_date,
+                published_date=self._parse_date(pub_date),
+                updated_date=self._parse_date(upd_date),
                 primary_category=prim_cat,
                 categories=json.loads(cats_json),
-                pdf_url=pdf
+                pdf_url=pdf,
+                llm_summary=llm_summ,
+                key_insights=insights
             )
             
     def count_papers(self) -> int:
@@ -134,3 +170,45 @@ class DatabaseManager:
             cursor = conn.cursor()
             cursor.execute("SELECT COUNT(*) FROM papers")
             return cursor.fetchone()[0]
+
+    def get_recent_papers(self, limit: int = 20, offset: int = 0) -> List[Paper]:
+        """Retrieves a list of papers ordered by published date."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT * FROM papers 
+                ORDER BY published_date DESC 
+                LIMIT ? OFFSET ?
+            """, (limit, offset))
+            
+            rows = cursor.fetchall()
+            papers = []
+            
+            for row in rows:
+                (pid, title, summary, pub_date, upd_date, prim_cat, cats_json, pdf, llm_summ, insights) = row
+                
+                # Fetch authors (This effectively causes N+1 query problem, acceptable for small MVP limits)
+                cursor.execute("""
+                    SELECT a.name FROM authors a
+                    JOIN paper_authors pa ON a.id = pa.author_id
+                    WHERE pa.paper_id = ?
+                """, (pid,))
+                author_rows = cursor.fetchall()
+                authors = [r[0] for r in author_rows]
+                
+                papers.append(Paper(
+                    arxiv_id=pid,
+                    title=title,
+                    authors=authors,
+                    summary=summary,
+                    published_date=self._parse_date(pub_date),
+                    updated_date=self._parse_date(upd_date),
+                    primary_category=prim_cat,
+                    categories=json.loads(cats_json),
+                    pdf_url=pdf,
+                    llm_summary=llm_summ,
+                    key_insights=insights
+                ))
+                
+            return papers
