@@ -43,12 +43,12 @@ description: DeepReader 项目的官方开发指南。包含架构决策、编�
 
 **当前阶段**: Phase 1 (MVP) - 核心循环搭建
 
-### Phase 1: The Core Loop (进行中)
-- [ ] **Environment**: Python 3.10+, 虚拟环境, 目录结构。
-- [ ] **Collector**: ArXiv API Client (Fetching & Filtering).
-- [ ] **Storage**: SQLite Schema (Papers, Authors).
-- [ ] **Notifier**: 基础 SMTP 邮件发送。
-- [ ] **Integration**: 每日定时任务脚本。
+### Phase 1: The Core Loop (已完成)
+- [x] **Environment**: Python 3.10+, 虚拟环境, 目录结构。
+- [x] **Collector**: ArXiv API Client (Fetching & Filtering).
+- [x] **Storage**: SQLite Schema (Papers, Authors).
+- [x] **Notifier**: 基础 SMTP 邮件发送。
+- [x] **Integration**: 每日定时任务脚本。
 
 ### Phase 2: Intelligence & UI (待定)
 - [ ] LLM Summarization (Gemini/OpenAI).
@@ -64,6 +64,7 @@ description: DeepReader 项目的官方开发指南。包含架构决策、编�
 | 日期 | 模块/组件 | 问题描述 (Issue) | 解决方案/预防措施 (Solution) |
 | :--- | :--- | :--- | :--- |
 | 2026-02-05 | Project Setup | (预留) 初始环境配置可能遇到的依赖冲突 | 建议使用 `venv` 或 `conda` 严格隔离环境，并固定 `requirements.txt` 版本。 |
+| 2026-02-05 | Storage/Test | `sqlite3` `:memory:` DB isolation causing "no such table" errors in tests | `sqlite3.connect(":memory:")` creates a fresh DB every time. For tests requiring shared connection logic (like our Manager), use a temp file via `tmp_path` instead. |
 | - | - | - | - |
 
 ---
