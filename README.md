@@ -101,8 +101,4 @@ We follow the **GitHub Flow** for development to ensure a clean and deployable `
 - Once approved, merge the PR into `main`.
 - Delete the feature branch after merging.
 
----
 
-## 🚀 Getting Started
-
-*(Instructions for setting up the dev environment will be added here after Phase 1 setup)*

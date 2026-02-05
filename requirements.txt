@@ -1,0 +1,12 @@
+# Core
+pydantic>=2.0.0
+python-dotenv>=1.0.0
+apscheduler>=3.10.0
+
+# Network/Data
+requests>=2.31.0
+arxiv>=2.1.0
+
+# Dev/Test
+pytest>=7.0.0
+ruff>=0.1.0
