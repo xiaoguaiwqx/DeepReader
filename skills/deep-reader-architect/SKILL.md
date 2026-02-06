@@ -46,6 +46,7 @@ description: DeepReader 项目的官方开发指南。包含架构决策、编�
 ### Phase 1: The Core Loop (已完成)
 - [x] **Environment**: Python 3.10+, 虚拟环境, 目录结构。
 - [x] **Collector**: ArXiv API Client (Fetching & Filtering).
+  - **增强**: 现在通过 `run_daily_cycle` 中的 `query` 参数和 `/api/trigger` 端点支持基于用户定义关键词的论文获取。
 - [x] **Storage**: SQLite Schema (Papers, Authors).
 - [x] **Notifier**: 基础 SMTP 邮件发送。
 - [x] **Integration**: 每日定时任务脚本。

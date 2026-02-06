@@ -2,11 +2,20 @@ from deep_reader.collector.arxiv_client import ArxivCollector
 from deep_reader.storage.db_manager import DatabaseManager
 from deep_reader.notifier.email_service import EmailNotifier
 from deep_reader.intelligence.llm_client import LLMClient
+from datetime import datetime, timedelta, timezone
+from typing import Optional # Import Optional
 
-def run_daily_cycle(category: str = "cs.AI", days: int = 1):
-    print(f"Starting daily cycle for {category}...")
+def run_daily_cycle(
+    query: Optional[str] = None, 
+    category: str = "cs.AI", 
+    days: Optional[int] = None, 
+    topic: Optional[str] = None,
+    start_date_str: Optional[str] = None,
+    end_date_str: Optional[str] = None
+):
+    print("Starting fetch cycle...")
     
-    # 1. Initialize Components
+    # ... (components init)
     collector = ArxivCollector()
     db = DatabaseManager()
     notifier = EmailNotifier()
@@ -14,8 +23,36 @@ def run_daily_cycle(category: str = "cs.AI", days: int = 1):
     
     # 2. Fetch Papers
     print("Fetching papers...")
-    papers = collector.get_recent_papers(category=category, days=days)
-    print(f"Fetched {len(papers)} papers.")
+    
+    actual_query = query
+    if not actual_query:
+        if start_date_str and end_date_str:
+            # Use explicit dates (Expected format: YYYY-MM-DD)
+            # ArXiv needs YYYYMMDDHHMM
+            s = start_date_str.replace("-", "") + "0000"
+            e = end_date_str.replace("-", "") + "2359"
+            date_query = f"submittedDate:[{s} TO {e}]"
+        else:
+            # Fallback to 'days' logic
+            fetch_days = days if days is not None else 1
+            end_dt = datetime.now(timezone.utc)
+            start_dt = end_dt - timedelta(days=fetch_days)
+            date_query = f"submittedDate:[{start_dt.strftime('%Y%m%d0000')} TO {end_dt.strftime('%Y%m%d2359')}]"
+        
+        if topic:
+            safe_topic = f'"{topic}"' if " " in topic else topic
+            # Use parentheses for category if it contains OR to maintain logic
+            safe_cat = f"({category})" if " OR " in category else category
+            # Use AND for high precision as requested by user.
+            actual_query = f'all:{safe_topic} AND cat:{safe_cat} AND {date_query}'
+        else:
+            safe_cat = f"({category})" if " OR " in category else category
+            actual_query = f"cat:{safe_cat} AND {date_query}"
+            
+        print(f"Constructed query: {actual_query}")
+        
+    papers = collector.fetch_papers(query=actual_query, max_results=200) 
+    print(f"Fetched {len(papers)} papers using query: '{actual_query}'.")
     
     if not papers:
         print("No papers found.")
