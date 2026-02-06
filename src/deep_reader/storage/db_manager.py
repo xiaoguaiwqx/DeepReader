@@ -171,16 +171,92 @@ class DatabaseManager:
             cursor.execute("SELECT COUNT(*) FROM papers")
             return cursor.fetchone()[0]
 
-    def get_recent_papers(self, limit: int = 20, offset: int = 0) -> List[Paper]:
+    def count_papers_filtered(
+        self,
+        topic: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> int:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            clauses = []
+            params: List[str] = []
+
+            if topic:
+                # Split topic into individual keywords and ensure all of them are present
+                # This increases robustness against minor title variations
+                keywords = topic.lower().split()
+                for kw in keywords:
+                    like = f"%{kw}%"
+                    clauses.append(
+                        "(LOWER(title) LIKE ? OR LOWER(summary) LIKE ? OR LOWER(primary_category) LIKE ? OR LOWER(categories) LIKE ?)"
+                    )
+                    params.extend([like, like, like, like])
+
+            if start_date:
+                # Use strftime style to ensure clean date comparison
+                clauses.append("strftime('%Y-%m-%d', published_date) >= ?")
+                params.append(start_date)
+
+            if end_date:
+                clauses.append("strftime('%Y-%m-%d', published_date) <= ?")
+                params.append(end_date)
+
+            where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+
+            cursor.execute(
+                f"SELECT COUNT(*) FROM papers {where_sql}",
+                params,
+            )
+            return cursor.fetchone()[0]
+
+    def get_recent_papers(
+        self,
+        limit: int = 20,
+        offset: int = 0,
+        topic: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> List[Paper]:
         """Retrieves a list of papers ordered by published date."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            
-            cursor.execute("""
+
+            clauses = []
+            params: List[str] = []
+
+            if topic:
+                # Split topic into individual keywords and ensure all of them are present
+                # This increases robustness against minor title variations
+                keywords = topic.lower().split()
+                for kw in keywords:
+                    like = f"%{kw}%"
+                    clauses.append(
+                        "(LOWER(title) LIKE ? OR LOWER(summary) LIKE ? OR LOWER(primary_category) LIKE ? OR LOWER(categories) LIKE ?)"
+                    )
+                    params.extend([like, like, like, like])
+
+            if start_date:
+                # Use strftime style to ensure clean date comparison
+                clauses.append("strftime('%Y-%m-%d', published_date) >= ?")
+                params.append(start_date)
+
+            if end_date:
+                clauses.append("strftime('%Y-%m-%d', published_date) <= ?")
+                params.append(end_date)
+
+            where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+
+            cursor.execute(
+                f"""
                 SELECT * FROM papers 
+                {where_sql}
                 ORDER BY published_date DESC 
                 LIMIT ? OFFSET ?
-            """, (limit, offset))
+                """,
+                (*params, limit, offset),
+            )
             
             rows = cursor.fetchall()
             papers = []

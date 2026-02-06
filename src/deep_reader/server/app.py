@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
@@ -42,8 +42,12 @@ class PaperListResponse(BaseModel):
     offset: int
 
 class TriggerRequest(BaseModel):
-    category: str = "cs.AI"
-    days: int = 1
+    category: str = "cs.AI OR cs.LG OR cs.CV OR cs.CL"
+    days: Optional[int] = None
+    topic: Optional[str] = None
+    query: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
 
 # --- Endpoints ---
 
@@ -52,12 +56,28 @@ async def root():
     return {"status": "ok", "message": "DeepReader API is running"}
 
 @app.get("/api/papers", response_model=PaperListResponse, tags=["Papers"])
-async def get_papers(limit: int = 20, offset: int = 0):
+async def get_papers(
+    limit: int = 20,
+    offset: int = 0,
+    topic: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+):
     """
     Get a paginated list of papers.
     """
-    papers = db_manager.get_recent_papers(limit=limit, offset=offset)
-    total = db_manager.count_papers()
+    papers = db_manager.get_recent_papers(
+        limit=limit,
+        offset=offset,
+        topic=topic,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    total = db_manager.count_papers_filtered(
+        topic=topic,
+        start_date=start_date,
+        end_date=end_date,
+    )
     
     return PaperListResponse(
         items=papers,
@@ -79,8 +99,29 @@ async def get_paper_detail(paper_id: str):
 @app.post("/api/trigger", tags=["Jobs"])
 async def trigger_fetch(request: TriggerRequest, background_tasks: BackgroundTasks):
     """
-    Manually trigger the daily fetch cycle in the background.
+    Manually trigger the fetch cycle in the background.
     """
-    # Run in background to avoid blocking request
-    background_tasks.add_task(run_daily_cycle, category=request.category, days=request.days)
-    return {"status": "accepted", "message": f"Fetch job triggered for {request.category}"}
+    if request.query:
+        background_tasks.add_task(run_daily_cycle, query=request.query)
+        message = f"Fetch job triggered with custom query: {request.query}"
+    else:
+        background_tasks.add_task(
+            run_daily_cycle, 
+            category=request.category, 
+            days=request.days, 
+            topic=request.topic,
+            start_date_str=request.start_date,
+            end_date_str=request.end_date
+        )
+        msg_parts = [f"category: {request.category}"]
+        if request.start_date and request.end_date:
+            msg_parts.append(f"range: {request.start_date} to {request.end_date}")
+        elif request.days:
+            msg_parts.append(f"last {request.days} days")
+        
+        if request.topic:
+            msg_parts.append(f"topic: {request.topic}")
+            
+        message = f"Fetch job triggered for {', '.join(msg_parts)}"
+        
+    return {"status": "accepted", "message": message}
