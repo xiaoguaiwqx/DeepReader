@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import patch
 from datetime import datetime, timezone
 from deep_reader.storage.db_manager import DatabaseManager
 from deep_reader.models import Paper
@@ -62,3 +63,24 @@ def test_save_duplicate_paper(db):
     assert db.count_papers() == 1
     retrieved = db.get_paper("2301.00002")
     assert retrieved.title == "Updated Title"
+
+
+def test_topic_search_fallback_to_like(db):
+    paper = Paper(
+        arxiv_id="2301.00003",
+        title="Deep Learning for Vision",
+        authors=["Tester"],
+        summary="A paper about deep learning and vision.",
+        published_date=datetime.now(timezone.utc),
+        updated_date=datetime.now(timezone.utc),
+        primary_category="cs.CV",
+        categories=["cs.CV"],
+    )
+
+    db.save_paper(paper)
+    db._fts_enabled = False
+
+    with patch.object(DatabaseManager, "_build_fts_query", side_effect=AssertionError("FTS used")):
+        assert db.count_papers_filtered(topic="deep vision") == 1
+        results = db.get_recent_papers(topic="deep vision")
+        assert len(results) == 1

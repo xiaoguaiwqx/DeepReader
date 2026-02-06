@@ -1,6 +1,6 @@
 import sqlite3
 import json
-from typing import Optional, List
+from typing import Optional, List, Dict
 from datetime import datetime
 
 from deep_reader.models import Paper
@@ -8,6 +8,7 @@ from deep_reader.models import Paper
 class DatabaseManager:
     def __init__(self, db_path: str = "deep_reader.db"):
         self.db_path = db_path
+        self._fts_enabled = False
         self._init_db()
 
     def _get_connection(self):
@@ -32,6 +33,11 @@ class DatabaseManager:
                 )
             """)
 
+            # Index to speed up date range filters
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_papers_published_date ON papers(published_date)"
+            )
+
             # Migration: Add new columns if they don't exist
             try:
                 cursor.execute("ALTER TABLE papers ADD COLUMN llm_summary TEXT")
@@ -42,6 +48,47 @@ class DatabaseManager:
                 cursor.execute("ALTER TABLE papers ADD COLUMN key_insights TEXT")
             except sqlite3.OperationalError:
                 pass
+
+            # Optional FTS for topic search performance
+            try:
+                cursor.execute(
+                    """
+                    CREATE VIRTUAL TABLE IF NOT EXISTS papers_fts USING fts5(
+                        title, summary, primary_category, categories,
+                        content='papers', content_rowid='rowid'
+                    )
+                    """
+                )
+                cursor.execute(
+                    """
+                    CREATE TRIGGER IF NOT EXISTS papers_ai AFTER INSERT ON papers BEGIN
+                        INSERT INTO papers_fts(rowid, title, summary, primary_category, categories)
+                        VALUES (new.rowid, new.title, new.summary, new.primary_category, new.categories);
+                    END;
+                    """
+                )
+                cursor.execute(
+                    """
+                    CREATE TRIGGER IF NOT EXISTS papers_ad AFTER DELETE ON papers BEGIN
+                        INSERT INTO papers_fts(papers_fts, rowid, title, summary, primary_category, categories)
+                        VALUES('delete', old.rowid, old.title, old.summary, old.primary_category, old.categories);
+                    END;
+                    """
+                )
+                cursor.execute(
+                    """
+                    CREATE TRIGGER IF NOT EXISTS papers_au AFTER UPDATE ON papers BEGIN
+                        INSERT INTO papers_fts(papers_fts, rowid, title, summary, primary_category, categories)
+                        VALUES('delete', old.rowid, old.title, old.summary, old.primary_category, old.categories);
+                        INSERT INTO papers_fts(rowid, title, summary, primary_category, categories)
+                        VALUES (new.rowid, new.title, new.summary, new.primary_category, new.categories);
+                    END;
+                    """
+                )
+                self._fts_enabled = True
+            except sqlite3.OperationalError:
+                # FTS5 might be unavailable in some builds; fallback to LIKE
+                self._fts_enabled = False
             
             # Authors table
             cursor.execute("""
@@ -80,6 +127,12 @@ class DatabaseManager:
                      pass
                 return date_val # Return as is or raise
         return date_val
+
+    def _build_fts_query(self, topic: str) -> str:
+        keywords = [kw.strip().replace('"', '') for kw in topic.lower().split() if kw.strip()]
+        if not keywords:
+            return ""
+        return " AND ".join(keywords)
 
     def save_paper(self, paper: Paper):
         """Saves a paper and its authors to the database."""
@@ -171,6 +224,51 @@ class DatabaseManager:
             cursor.execute("SELECT COUNT(*) FROM papers")
             return cursor.fetchone()[0]
 
+    def get_stats(self) -> Dict[str, object]:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute("SELECT COUNT(*), MAX(updated_date) FROM papers")
+            total, last_fetch = cursor.fetchone()
+
+            last_fetch_dt = self._parse_date(last_fetch) if last_fetch else None
+            last_fetch_time = (
+                last_fetch_dt.isoformat() if isinstance(last_fetch_dt, datetime) else None
+            )
+
+            cursor.execute(
+                "SELECT primary_category, COUNT(*) FROM papers GROUP BY primary_category"
+            )
+            categories = {row[0]: row[1] for row in cursor.fetchall() if row[0]}
+
+            cursor.execute(
+                """
+                SELECT
+                    SUM(CASE WHEN llm_summary IS NOT NULL AND llm_summary != '' THEN 1 ELSE 0 END),
+                    COUNT(*)
+                FROM papers
+                """
+            )
+            with_summary, summary_total = cursor.fetchone()
+            with_summary = with_summary or 0
+            summary_total = summary_total or 0
+
+            return {
+                "total": total,
+                "last_fetch_time": last_fetch_time,
+                "categories": categories,
+                "with_summary": with_summary,
+                "without_summary": summary_total - with_summary,
+            }
+
+    def get_categories(self) -> List[str]:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT primary_category FROM papers WHERE primary_category IS NOT NULL GROUP BY primary_category"
+            )
+            return [row[0] for row in cursor.fetchall() if row[0]]
+
     def count_papers_filtered(
         self,
         topic: Optional[str] = None,
@@ -184,15 +282,21 @@ class DatabaseManager:
             params: List[str] = []
 
             if topic:
-                # Split topic into individual keywords and ensure all of them are present
-                # This increases robustness against minor title variations
-                keywords = topic.lower().split()
-                for kw in keywords:
-                    like = f"%{kw}%"
-                    clauses.append(
-                        "(LOWER(title) LIKE ? OR LOWER(summary) LIKE ? OR LOWER(primary_category) LIKE ? OR LOWER(categories) LIKE ?)"
-                    )
-                    params.extend([like, like, like, like])
+                if self._fts_enabled:
+                    fts_query = self._build_fts_query(topic)
+                    if fts_query:
+                        clauses.append("papers_fts MATCH ?")
+                        params.append(fts_query)
+                else:
+                    # Split topic into individual keywords and ensure all of them are present
+                    # This increases robustness against minor title variations
+                    keywords = topic.lower().split()
+                    for kw in keywords:
+                        like = f"%{kw}%"
+                        clauses.append(
+                            "(LOWER(title) LIKE ? OR LOWER(summary) LIKE ? OR LOWER(primary_category) LIKE ? OR LOWER(categories) LIKE ?)"
+                        )
+                        params.extend([like, like, like, like])
 
             if start_date:
                 # Use strftime style to ensure clean date comparison
@@ -205,10 +309,16 @@ class DatabaseManager:
 
             where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
 
-            cursor.execute(
-                f"SELECT COUNT(*) FROM papers {where_sql}",
-                params,
-            )
+            if topic and self._fts_enabled:
+                cursor.execute(
+                    f"SELECT COUNT(*) FROM papers JOIN papers_fts ON papers_fts.rowid = papers.rowid {where_sql}",
+                    params,
+                )
+            else:
+                cursor.execute(
+                    f"SELECT COUNT(*) FROM papers {where_sql}",
+                    params,
+                )
             return cursor.fetchone()[0]
 
     def get_recent_papers(
@@ -227,15 +337,21 @@ class DatabaseManager:
             params: List[str] = []
 
             if topic:
-                # Split topic into individual keywords and ensure all of them are present
-                # This increases robustness against minor title variations
-                keywords = topic.lower().split()
-                for kw in keywords:
-                    like = f"%{kw}%"
-                    clauses.append(
-                        "(LOWER(title) LIKE ? OR LOWER(summary) LIKE ? OR LOWER(primary_category) LIKE ? OR LOWER(categories) LIKE ?)"
-                    )
-                    params.extend([like, like, like, like])
+                if self._fts_enabled:
+                    fts_query = self._build_fts_query(topic)
+                    if fts_query:
+                        clauses.append("papers_fts MATCH ?")
+                        params.append(fts_query)
+                else:
+                    # Split topic into individual keywords and ensure all of them are present
+                    # This increases robustness against minor title variations
+                    keywords = topic.lower().split()
+                    for kw in keywords:
+                        like = f"%{kw}%"
+                        clauses.append(
+                            "(LOWER(title) LIKE ? OR LOWER(summary) LIKE ? OR LOWER(primary_category) LIKE ? OR LOWER(categories) LIKE ?)"
+                        )
+                        params.extend([like, like, like, like])
 
             if start_date:
                 # Use strftime style to ensure clean date comparison
@@ -248,15 +364,27 @@ class DatabaseManager:
 
             where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
 
-            cursor.execute(
-                f"""
-                SELECT * FROM papers 
-                {where_sql}
-                ORDER BY published_date DESC 
-                LIMIT ? OFFSET ?
-                """,
-                (*params, limit, offset),
-            )
+            if topic and self._fts_enabled:
+                cursor.execute(
+                    f"""
+                    SELECT papers.* FROM papers
+                    JOIN papers_fts ON papers_fts.rowid = papers.rowid
+                    {where_sql}
+                    ORDER BY published_date DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    (*params, limit, offset),
+                )
+            else:
+                cursor.execute(
+                    f"""
+                    SELECT * FROM papers 
+                    {where_sql}
+                    ORDER BY published_date DESC 
+                    LIMIT ? OFFSET ?
+                    """,
+                    (*params, limit, offset),
+                )
             
             rows = cursor.fetchall()
             papers = []
