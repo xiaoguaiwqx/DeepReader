@@ -1,4 +1,6 @@
-import React from 'react';
+'use client';
+
+import React, { useState } from 'react';
 import { Paper } from '@/types/paper';
 
 interface PaperCardProps {
@@ -6,6 +8,8 @@ interface PaperCardProps {
 }
 
 export const PaperCard: React.FC<PaperCardProps> = ({ paper }) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+
   return (
     <div className="bg-white shadow-md rounded-lg p-6 mb-4 border border-gray-200 hover:shadow-lg transition-shadow">
       <div className="flex justify-between items-start">
@@ -33,10 +37,18 @@ export const PaperCard: React.FC<PaperCardProps> = ({ paper }) => {
 
       {paper.llm_summary ? (
         <div className="mt-4 bg-indigo-50 p-4 rounded-md border-l-4 border-indigo-500">
-          <h3 className="text-sm font-bold text-indigo-900 mb-1">AI Insight</h3>
-          <p className="text-gray-700 text-sm whitespace-pre-line leading-relaxed">
+          <div className="flex justify-between items-center mb-1">
+            <h3 className="text-sm font-bold text-indigo-900">AI Insight</h3>
+            <button
+              onClick={() => setIsExpanded(!isExpanded)}
+              className="text-xs text-indigo-600 hover:text-indigo-800 font-medium focus:outline-none"
+            >
+              {isExpanded ? 'Show Less' : 'Read More'}
+            </button>
+          </div>
+          <div className={`text-gray-700 text-sm whitespace-pre-line leading-relaxed ${!isExpanded ? 'line-clamp-3' : ''}`}>
             {paper.llm_summary}
-          </p>
+          </div>
         </div>
       ) : (
         <div className="mt-4">
@@ -49,3 +61,4 @@ export const PaperCard: React.FC<PaperCardProps> = ({ paper }) => {
     </div>
   );
 };
+
